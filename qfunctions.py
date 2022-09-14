@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
+"""
+Version on Wed Sep 14 2022
 
+"""
 # In[ ]:
 
 import qutip
@@ -15,7 +18,6 @@ import timeit
 import scipy.optimize as sop
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
-from IPython.display import clear_output as cl
 import os
 import tkinter as tk # Import the module to load the paths of the files
 import tkinter.filedialog # The function that opens the file dialog to select the file/files/directory
@@ -835,7 +837,7 @@ class Field():
         
         return
     
-    def xz_cut(field, yc, cmap = 'RdBu', save = True, fmt = '.png'):        
+    def xz_cut(field, yc, cmap = 'RdBu', save = False, fmt = '.png'):        
         
         "XZ CUTS"
         
@@ -890,7 +892,7 @@ class Field():
         return
     
 
-    def yz_cut(field, xc, cmap = 'RdBu', save = True,  fmt = '.png'):        
+    def yz_cut(field, xc, cmap = 'RdBu', save = False,  fmt = '.png'):        
     
         "YZ CUTS"
         
@@ -945,7 +947,81 @@ class Field():
     
         return
 
+    def crystal_base(field, axis=np.array([0,0,1])):
+        
+        zangle = angle(axis,np.array([0,0,1]))
+        xangle = angle(axis,np.array([1,0,0]))
+        
+        M = rotationmatrix(xangle, zangle)
+        
+        Brfx = M[0,0]*field.Brfx + M[0,1]*field.Brfy + M[0,2]*field.Brfz
+        Brfy = M[1,0]*field.Brfx + M[1,1]*field.Brfy + M[1,2]*field.Brfz
+        Brfz = M[2,0]*field.Brfx + M[2,1]*field.Brfy + M[2,2]*field.Brfz
+        
+        field.Brfx = Brfx
+        field.Brfy = Brfy
+        field.Brfz = Brfz
+        
+        return field 
+
 "#########################################################################"
+
+def angle(vector1, vector2):
+    
+    """
+    Function to know angle between two vectors
+    
+    Parameters
+    -------
+    vector1: numpy array 1st vector
+    vector2: numpy array 2nd vector
+    
+    Returns
+    -------
+    angle: float angle between the two vectors
+    """
+    
+    vector1 = vector1/np.linalg.norm(vector1) # normalisation
+    vector2 = vector2/np.linalg.norm(vector2) # normalisation
+    angle = np.arccos(np.dot(vector1,vector2)) # rad
+    
+    return angle
+
+def rotationmatrix(fi=0., theta=0.):
+    
+    """
+    Function to rotate a vector in 3D
+    
+    Parameters
+    -------
+    fi: angle with the x axis
+    theta: angle with the z axis
+    
+    (spherical coordinate system)
+    
+    Returns
+    -------
+    M: numpy array
+        Rotation matrix // Base change matrix
+    """
+    
+    # Molecule axes in lab coordinates
+    Z_mol = np.array([np.cos(fi)*np.sin(theta), np.sin(fi)*np.sin(theta), np.cos(theta)])
+
+    X_mol = np.cross([0, 1, 0], Z_mol)
+    X_mol = X_mol/np.linalg.norm(X_mol)
+
+    Y_mol = np.cross(Z_mol,X_mol)
+    Y_mol = Y_mol/np.linalg.norm(Y_mol)
+    
+    # Base change matrix:
+    M = np.zeros((3,3))
+    M[:,0] = X_mol
+    M[:,1] = Y_mol
+    M[:,2] = Z_mol
+    M = np.linalg.inv(M)
+    
+    return M
 #%%
 
 class File():
