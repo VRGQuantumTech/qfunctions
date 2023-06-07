@@ -5,6 +5,7 @@ Created on Mon Apr 17 08:01:16 2023
 @author: vrgns
 
 # Description: library for magnetic field calculation using CUDA
+# v1.0
 """
 
 import numpy as np
