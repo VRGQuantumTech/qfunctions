@@ -4,15 +4,25 @@ Created on Mon Apr 17 08:01:16 2023
 
 @author: VRG@HQDlab
 
-# Description: library for magnetic field calculation using CUDA
-# v1.1 - Added getGPUparams() (by CZ@HQDlab) function to exploit the full
-         resources of each nVidia card. Modified gpu_fieldv2 function to
-         implement getGPUparams() function.
-         
-ToDo: Fix time prediction in gpu_fieldv2().
-      Remove gpu_field() function and rename gpu_fieldv2() as gpu_field()
-      Move pth class (by DR@SuperTechCAB) to a loadpath.py library and import
-      it here.
+# Description: library for magnetic field calculation using CUDA.
+
+# v1.2   - Huge performance boost in SegCurrent2Field() CUDA function by 
+           implementing loop unrolling and avoiding definition of variables
+           by silent threads.
+           Fixed time prediction in gpu_field().
+           Fixed bdim bug (it was set at (8,8,8)) in the last calculation step
+           for segmented calculation.
+           Added _total_time() function.
+           Improved information messages during execution.
+           Removed gpu_field() function and renamed gpu_fieldv2() as gpu_field().
+           Moved pth class (by DR@SuperTechCAB) to a loadpath.py library.
+           Documented some functions and classes.
+           
+ToDo: Fix Current2Field() function for small size problems.
+      Invert color scale in xz_cut() and yz_cut() methods.
+      Finish _total_time() function to implement correct time prediction.
+      Optimize deflattening loop at the end in gpu_field()
+                       
 """
 
 import numpy as np
@@ -25,10 +35,11 @@ import pycuda.autoinit
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
 import os
-import tkinter as tk # Import the module to load the paths of the files
-import tkinter.filedialog # The function that opens the file dialog to select the file/files/directory
-from natsort import natsorted
-import timeit
+import time
+import getpass
+import json
+from loadpath import pth
+from datetime import datetime
 
 " #################### RESONATOR CURRENT DISTRIBUTION ###################### "
 
@@ -381,32 +392,7 @@ def loadfield(path, angles = {'angle': 0., 'fi': 0., 'theta': 0.}):
     H2DZ = Aux['H2DX'][(0)][(0)] #T
     H2DY = Aux['H2DY'][(0)][(0)] #T
     H2DX = -1*Aux['H2DZ'][(0)][(0)] #T
-    
-    """if os.path.isfile(path):
-        
-        # LOAD MATRICES FROM .MAT FILE
-        Aux = sio.loadmat(path + '/field.mat')
-        Aux = Aux['field1'] #T and m
-        
-        H2DZ = Aux['H2DX'][(0)][(0)] #T
-        H2DY = Aux['H2DY'][(0)][(0)] #T
-        H2DX = -1*Aux['H2DZ'][(0)][(0)] #T
-        
-    elif os.path.isfile(path + '/fieldx.mat') and os.path.isfile(path + '/fieldy.mat') and os.path.isfile(path + '/fieldz.mat'):
-    
-        # LOAD MATRICES FROM .MAT FILES (SEPARATE)
-        Aux = sio.loadmat(path + '/fieldx.mat')
-        Aux = Aux['fieldx']
-        H2DZ = Aux['H2DX'][(0)][(0)] #T
-        
-        Aux = sio.loadmat(path + '/fieldy.mat')
-        Aux = Aux['fieldy']
-        H2DY = Aux['H2DY'][(0)][(0)] #T
-        
-        Aux = sio.loadmat(path + '/fieldz.mat')
-        Aux = Aux['fieldz']
-        H2DX = -1*Aux['H2DZ'][(0)][(0)] #T"""
-        
+            
           
     "ROTATING THE Brf FIELD"
     
@@ -583,10 +569,10 @@ def getDeviceGridSize():
             
     return(GridSize_x)
 
-def getGPUparams():
+def _getGPUparams():
     cuda.driver.init()
     print("%d device(s) found." % cuda.driver.Device.count())
-    
+
     for ordinal in range(cuda.driver.Device.count()):
         dev = cuda.driver.Device(ordinal)
         print('Device #%d: %s' % (ordinal, dev.name()))
@@ -598,144 +584,194 @@ def getGPUparams():
         mgdy = dev.get_attribute(cuda.driver.device_attribute.MAX_GRID_DIM_X)
         mgdz = dev.get_attribute(cuda.driver.device_attribute.MAX_GRID_DIM_X)
         print('Max threads per block: %s' % mtpb)
-        print('Max dimensions of a thread block (x,y,z): (%s, %s, %s)' % (mbdx,mbdy,mbdz))
-        print('Max dimensions of a grid (x,y,z): (%s, %s, %s)' % (mgdx,mgdy,mgdz))
+        print('Max dimensions of a thread block (x,y,z): (%s, %s, %s)' % (mbdx, mbdy, mbdz))
+        print('Max dimensions of a grid (x,y,z): (%s, %s, %s)' % (mgdx, mgdy, mgdz))
         print()
+
+    return [mbdx, mbdy, mbdz], dev.name()
+
+def _total_time(tic, toc, device_id, slides, elements):
+    
+    total_time = toc - tic
+    Minutes, Hours = math.modf(total_time/3600)
+    Seconds, Minutes = math.modf(Minutes*60)
+    print('Total time: %i h, %i min, %.2f sec.' %(Hours, Minutes, Seconds))
+    
+    time_data = {}
+    time_data['date'] = datetime.today().strftime('%Y-%m-%d')
+    time_data['device_id'] = device_id
+    time_data['slides'] = float(slides)
+    time_data['elements'] = float(elements)
+    time_data['lapse'] = [Hours, Minutes, Seconds]
+    
+    username = getpass.getuser()
+    dirpath = 'C:/Users/' + username + '/.magcal/'
+    if not os.path.exists(dirpath):
+        os.makedirs(dirpath)
         
-    return [int(mbdx),int(mbdy),int(mbdz)]
+    with open(dirpath + device_id, 'w') as f:
+        json.dump(time_data, f, indent=4)
+        
+    return
+
+#%% MAGNETIC FIELD CUDA AND PYCUDA FUNCTIONS
+
+"""################### PRECOMPILATION BLOCK SIZE SETTINGS ##################"""
+
+max_block_dim, device_id = _getGPUparams()
+
+# Define block size for dynamic block size setting
+block_size_map = {
+    1024: (16, 8, 8),  # 1024 threads per block (computing 1x)
+    512: (8, 8, 8),    # 512 threads per block (computing 1x)
+}
+
+bdim = block_size_map.get(max_block_dim[0])
+if bdim is None:
+    print('Unexpected block size')
+    exit()  # Terminate the program since block size is unexpected
+
+BLOCK_SIZE = bdim[0] * bdim[1] * bdim[2]
+
+"""##################### CUDA CODE FOR GPU_FIELD FUNCTION ##################"""
 
 mod = compiler.SourceModule("""
 
     #include<math.h>
     #include <stdio.h>
     
-    __global__ void Current2Field(float *Ixrs, float *Iyrs, float *H2D, float *posx, float *posy, float *posz, int X, int Y, int Z){
+    #define BLOCK_SIZE %d
     
-    //REMEMBER: this function is executed at each threat(thread?) at the same time!!
-    //__global__ indicates function that runs on device (GPU) and is called from host (CPU) code
-
-        int idx = threadIdx.x + blockDim.x*blockIdx.x;
-        int idy = threadIdx.y + blockDim.y*blockIdx.y;
-        int idz = threadIdx.z + blockDim.z*blockIdx.z;
-        
-        // If H1 H2 H3 have no pointer they are not accesible by the other threads.  
+    __global__ void Current2Field(float *Ixrs, float *Iyrs, float *H2D,
+                                  float *posx, float *posy, float *posz,
+                                  int X, int Y, int Z)
+    {
+       int idx = threadIdx.x + blockDim.x * blockIdx.x;
+       int idy = threadIdx.y + blockDim.y * blockIdx.y;
+       int idz = threadIdx.z + blockDim.z * blockIdx.z;
+       
+       if ((idx < X) && (idy < Y) && (idz < Z))
+       {
+            float dx = posx[idx + X * idy + X * Y * idz];
+            float dy = posy[idx + X * idy + X * Y * idz];
+            float dz = posz[idx + X * idy + X * Y * idz];
     
-        float H1 = 0;
-        float H2 = 0;
-        float H3 = 0;
-        
-        float dx;
-        float dy;
-        float dz;
-        if ((idx < X) && (idy < Y) && (idz < Z)){
-            dz = - posz[idx + X*idy + X*Y*idz];
-
-        }
-        float modr;
-        float imodr;
-        float power2 = 2;
-        float power3 = 3;
-               
-        int i = 0;
-        
-        // This loop is executed in all threads at the same time.
-        
-        for (i = 0 ; i < X*Y ; ++i){
-            
-            dx = posx[idx + X*idy] - posx[i];
-            dy = posy[idx + X*idy] - posy[i]; 
-            
-            modr = sqrt(pow(dx,power2) + pow(dy,power2) + pow(dz,power2));
-            imodr = 1/modr;
-            
-            H1 += Iyrs[i]*dz*pow(imodr, power3);
-            H2 += - Ixrs[i]*dz*pow(imodr, power3);
-            H3 += (Ixrs[i]*(dy) - Iyrs[i]*(dx))*pow(imodr, power3);
-            
-        }
-        
-        //Sync to ensure that every aux value is fully calculated at each threat before continue
-        __syncthreads();
-        
-        if ( ( idx < X) && (idy < Y) && ( idz < Z) ){
-            H2D[idx + X*idy + X*Y*idz] = H1;
-        } else if ( (idx < X) && (idy < Y) && (idz >= Z) && (idz < 2*Z) ){
-            H2D[idx + X*idy + X*Y*idz] = H2;
-        } else if ( (idx < X) && (idy < Y) && (idz >= 2*Z) && (idz < 3*Z) ){
-            H2D[idx + X*idy + X*Y*idz] = H3;
-        }
-        __syncthreads();
-    }
+            float H1 = 0;
+            float H2 = 0;
+            float H3 = 0;
     
-    __global__ void SegCurrent2Field(float *Ixrs, int DX, float *Iyrs, int DY, float *H2D, float *xi, float *yi, float *posx, float *posy, float *posz, int *loop, int X, int Y, int Z){                                             
-    
-    //REMEMBER: this function is executed at each GPU thread at the same time!!
-    //__global__ indicates function that runs on device (GPU) and is called from host (CPU) code
-
-        // GPU thread identifiers 
-        int idx = threadIdx.x + blockDim.x*blockIdx.x;
-        int idy = threadIdx.y + blockDim.y*blockIdx.y;
-        int idz = threadIdx.z + blockDim.z*blockIdx.z;
-        
-        // If E1 E2 E3 have no memory pointer (*) they are not accesible by the other threads.
-        // E1 is for Erfx calculation, E2 is for Erfy calculation and E3 is for Erfz calculation
-        float H1 = 0;
-        float H2 = 0;
-        float H3 = 0;
-        
-        // If dx dy dz have no memory pointer (*) they are not accesible by the other threads.
-        // dx, dy, dz are de distance (dx,dy,dz) from the pixel in which the program is making
-        // the calculation to the pixel that is taking for the calculation at each iteration.
-        float dx;
-        float dy;
-        float dz;
-        
-        // Variables with no memory pointer (*) do not depend on the thread
-        float modr; // (dx,dy,dz) modulus
-        float imodr; // (dx,dy,dz) modulus^-1
-        float power2 = 2; // cte
-        float power3 = 3; // cte
-        // TO DO LATER: replace power2 and power3 by constants. Reduces memory and time.  
-        
-        // This loop is executed in all threads at the same time.
-        int i = 0; 
-                     
-        if ((idx < X) && (idy < Y) && (idz < Z)){
-            // dz = - posz[idx + X*idy + X*Y*idz]; (Wrong?)          
-            dz = posz[idx + X*idy + X*Y*idz]; // Since zi[i] = 0 for all sources (all sources on z = 0)
-            
-            for (i = 0 ; i < DX*DY ; ++i){
+            for (int i = 0; i < X * Y; i += 4)
+            {
                 
-                dx = posx[idx + X*idy + X*Y*idz] - xi[i];
-                dy = posy[idx + X*idy + X*Y*idz] - yi[i]; 
-            
-                modr = sqrt(pow(dx,power2) + pow(dy,power2) + pow(dz,power2));
-                imodr = 1/modr;
-            
-                H1 += Iyrs[i]*dz*pow(imodr, power3);             
-                H2 += - Ixrs[i]*dz*pow(imodr, power3);
-                H3 += (Ixrs[i]*(dy) - Iyrs[i]*(dx))*pow(imodr, power3);
-                // In python, multiply constants!
+                for (int j = 0; j < 4; j++)
+                {
+                    float ijdx =  dx - posx[i + j];
+                    float ijdy =  dy - posy[i + j];
+        
+                    float modr = sqrtf(ijdx * ijdx + ijdy * ijdy + dz * dz);
+                    float imodr = 1 / modr;
+        
+                    H1 += Iyrs[i + j] * dz * (imodr * imodr * imodr);
+                    H2 += -Ixrs[i + j] * dz * (imodr * imodr * imodr);
+                    H3 += (Ixrs[i + j] * ijdy - Iyrs[i + j] * ijdx) * (imodr * imodr * imodr);
+    
+                }
             }
+             
+            H2D[idx + X * idy + X * Y * idz] = H1;
+            H2D[idx + X * idy + X * Y * idz + X * Y * Z] = H2;
+            H2D[idx + X * idy + X * Y * idz + 2 * X * Y * Z] = H3;
+           
+           
         }
         
-        //Sync to ensure that every aux value (E1 E2 E3) is fully calculated at each threat before continue
-        __syncthreads();
+     } 
+            
+    __global__ void SegCurrent2Field(float *Ixrs, int DX, float *Iyrs, int DY,
+                                         float *H2D, float *xi, float *yi, float *posx,
+                                         float *posy, float *posz, int *loop, int X, int Y, int Z)
+    {
+        int idx = threadIdx.x + blockDim.x * blockIdx.x;
+        int idy = threadIdx.y + blockDim.y * blockIdx.y;
+        int idz = threadIdx.z + blockDim.z * blockIdx.z;
         
-        if ( loop[idx + X*idy + X*Y*idz] == 0 ){
-            H2D[idx + X*idy + X*Y*idz] = H1;
-        } else if ( loop[idx + X*idy + X*Y*idz] == 1  ){
-            H2D[idx + X*idy + X*Y*idz] = H2;
-        } else if ( loop[idx + X*idy + X*Y*idz] == 2  ){
-            H2D[idx + X*idy + X*Y*idz] = H3;
+        if ((idx < X) && (idy < Y) && (idz < Z))
+        {
+            float dx = posx[idx + X * idy + X * Y * idz];
+            float dy = posy[idx + X * idy + X * Y * idz];
+            float dz = posz[idx + X * idy + X * Y * idz];
+    
+            float H1 = 0;
+            float H2 = 0;
+            float H3 = 0;
+    
+            for (int i = 0; i < DX * DY; i += 4)
+            {
+                
+                for (int j = 0; j < 4; j++)
+                {
+                    float ijdx =  dx - xi[i + j];
+                    float ijdy =  dy - yi[i + j];
+        
+                    float modr = sqrtf(ijdx * ijdx + ijdy * ijdy + dz * dz);
+                    float imodr = 1 / modr;
+        
+                    H1 += Iyrs[i + j] * dz * (imodr * imodr * imodr);
+                    H2 += -Ixrs[i + j] * dz * (imodr * imodr * imodr);
+                    H3 += (Ixrs[i + j] * ijdy - Iyrs[i + j] * ijdx) * (imodr * imodr * imodr);
+    
+                }
+            }
+        
+        
+            if (loop[idx + X * idy + X * Y * idz] == 0)
+            {
+                H2D[idx + X * idy + X * Y * idz] = H1;
+            }
+            else if (loop[idx + X * idy + X * Y * idz] == 1)
+            {
+                H2D[idx + X * idy + X * Y * idz] = H2;
+            }
+            else if (loop[idx + X * idy + X * Y * idz] == 2)
+            {
+                H2D[idx + X * idy + X * Y * idz] = H3;
+            }    
+            
         }
-        __syncthreads();
     }
-    """)
+                                                          
+""" % BLOCK_SIZE)
 
-######################################################################################
+"""#########################################################################"""
 
-def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
+
+"""############################### PYCUDA CODE #############################"""
+
+def gpu_field(Ixrs,Iyrs,posx,posy,posz):
+    
+    """
+    Function to calculate the 3D magnetic field from a 2D density current
+    distribution generated by sonnet. The z component of the current is assumed
+    as zero so the current is in a plane and given by a 2D matrix. The magnetic
+    field is calculated in the volume over that current distribution, so 
+    the magnetic field data is returned in a 3D matrix.
+    
+    Parameters
+    -------
+    Ixrs: numpy 2D array. x component of the density current.
+    Iyrs: numpy 2D array. y component of the density current.
+    posx: numpy 1D array. x component of the spatial information of the problem.
+    posy: numpy 1D array. y component of the spatial information of the probkem.
+    posz: numpy 1D array. z component of the spatial information of the problem.
+    
+    Returns
+    -------
+    Field: field class structure. it contains the three components of the
+           calculated magnetic field (Brfx, Brfy, Brfz), the module of the
+           magnetic field (Brf), the spatial information of the problem (posx,
+           posy, posz, dx, dy, dz).
+    """
+    tic_0 = time.time()
     
     DimX = (posx.shape[0])
     DimY = (posy.shape[0])
@@ -775,7 +811,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
             
     "SOLUTION ARRAY AND AUX ARRAYS CREATION"
     
-    print('Creating void 3D array to store solution . . .')
+    print('Creating void 3D array to store solution . . . \n')
     
     H2D = np.zeros(Dim, dtype = 'float32')
     # H2D is a flat array that will store the results of the calculation. 
@@ -811,7 +847,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
     # If the H2D flat array is too big (3*DimX*DimY*DimZ) the program will divide it in smaller flat arrays with dimension
     # DimS = 512*512*32 = 8388608.
     
-    max_block_dim = getGPUparams()
+    max_block_dim, device_id = _getGPUparams()
     DimS = max_block_dim[0] * max_block_dim[1] * max_block_dim[2]
     
     if ( Dim  <= DimS ):
@@ -843,7 +879,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
             bdim = (8,8,8) # 1024 threads per block (computing 1x)
         else:
             print('unexpected block size')
-        
+                    
         "DEFINING GRID SIZE"
         dx, mx = divmod(DimX, bdim[0])
         dy, my = divmod(DimY, bdim[1])
@@ -857,7 +893,8 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
         print('Grid size: ' + str(gdim))
         
         print('Performing the calculation . . .')
-        func(Ixrs_gpu, Iyrs_gpu, H2D_gpu, X_gpu, Y_gpu, posz_gpu, np.int32(DimX), np.int32(DimY), np.int32(DimZ), block = bdim, grid=gdim)
+        func(Ixrs_gpu, Iyrs_gpu, H2D_gpu, X_gpu, Y_gpu, posz_gpu, np.int32(DimX),
+             np.int32(DimY), np.int32(DimZ), block = bdim, grid=gdim)
         
         H2D = H2D_gpu.get()
         H2D = H2D*step*1e-7
@@ -871,10 +908,10 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
         DimZi = max_block_dim[2]
         
         print('Initializing segmented kernel')
-        print(mod)
         
         # Get the segmented kernel function from the precompiled module.
-        # Important! the compilation of the CUDA kernel will be performed during the import step, not during execution.
+        # Important! the compilation of the CUDA kernel will be performed
+        # during the import step, not during execution.
         func = mod.get_function("SegCurrent2Field")
         
         print('Problem divided in ' + str(DimC) + ' slices . . .')
@@ -888,7 +925,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
             bdim = (8,8,8) # 1024 threads per block (computing 1x)
         else:
             print('unexpected block size')
-           
+                       
         "DEFINING GRID SIZE"
         dx, mx = divmod(DimXi, bdim[0])
         dy, my = divmod(DimYi, bdim[1])
@@ -902,8 +939,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
         print('Grid size: ' + str(gdim))
         
         i = 0
-        Loop_time = 0
-        Total_time = DimC*Loop_time
+        Loop_time = 0        
         
         for i in range(DimC):            
             
@@ -913,8 +949,8 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                 
                 Remaining_time = (DimC - i)*Loop_time
 
-                Minutes, Hours = math.modf(Remaining_time/3600)
-                Seconds, Minutes = math.modf(Minutes*60)
+                Hours, Seconds = divmod(Remaining_time, 3600)
+                Minutes, Seconds = divmod(Seconds, 60)
                 
                 print('Remaining time: ' + str(Hours) + ' h, ' + str(Minutes) + ' min, ' + str(round(Seconds,2)) + ' sec.')
                 
@@ -928,22 +964,21 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                 posyi[0 : Dim - i*DimS] = posy3d[i*DimS : Dim]
                 loopi = np.zeros(DimS, np.int32)
                 loopi[0 : Dim - i*DimS] = loop[i*DimS : Dim]
-                print(loopi[0])
-                print(loopi[Dim - i*DimS-1])
-                
+
                 DimXii = DimXi
                 DimYii = DimYi
                 DimZii = DimZi
-                #DimR = int(Dim - i*DimS)
-                #DimYii = int(factorizehalf(DimR))
-                #DimZii = int(factorizehalf(DimR/DimYii))
-                #DimXii = int(DimR/(DimYii*DimZii))
-                
+
                 msize = (DimXii, DimYii, DimZii)
                 
                 "DEFINING BLOCK SIZE"
-                bdim = (8,8,8) # 512 threads per block (computing 1x)
-                                  
+                if max_block_dim[0] == 1024:
+                    bdim = (16,8,8) # 1024 threads per block (computing 1x)
+                elif max_block_dim[0] == 512:
+                    bdim = (8,8,8) # 1024 threads per block (computing 1x)
+                else:
+                    print('unexpected block size')
+                                
                 "DEFINING GRID SIZE"
                 dx, mx = divmod(DimXii, bdim[0])
                 dy, my = divmod(DimYii, bdim[1])
@@ -966,7 +1001,10 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                 
                 print('Performing the last calculation . . .')
                                           
-                func(Ixrs_gpu, np.int32(DimX), Iyrs_gpu, np.int32(DimY), H2D_gpu, X_gpu, Y_gpu, posx_gpu, posy_gpu, posz_gpu, loop_gpu, np.int32(DimXii), np.int32(DimYii), np.int32(DimZii), block = bdim, grid=gdim)
+                func(Ixrs_gpu, np.int32(DimX), Iyrs_gpu, np.int32(DimY), H2D_gpu,
+                     X_gpu, Y_gpu, posx_gpu, posy_gpu, posz_gpu, loop_gpu,
+                     np.int32(DimXii), np.int32(DimYii), np.int32(DimZii),
+                     block = bdim, grid=gdim)
                 
                 H2Di = H2D_gpu.get()
                 H2D_gpu.gpudata.free()
@@ -987,12 +1025,12 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                 if i != 0:
                     Remaining_time = (DimC - i)*Loop_time
 
-                    Minutes, Hours = math.modf(Remaining_time/3600)
-                    Seconds, Minutes = math.modf(Minutes*60)
+                    Hours, Seconds = divmod(Remaining_time, 3600)
+                    Minutes, Seconds = divmod(Seconds, 60)
                                     
                     print('Remaining time: ' + str(Hours) + ' h, ' + str(Minutes) + ' min, ' + str(round(Seconds,2)) + ' sec.')
                     
-                tic = timeit.default_timer();
+                tic = time.time();
                 
                 # Creating auxiliar arrays to store slices in the loops
                 H2Di = np.zeros(DimS, np.float32)
@@ -1017,7 +1055,10 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                             
                 print('Performing the calculation . . .')
                 
-                func(Ixrs_gpu, np.int32(DimX), Iyrs_gpu, np.int32(DimY), H2D_gpu, X_gpu, Y_gpu, posx_gpu, posy_gpu, posz_gpu, loop_gpu, np.int32(DimXi), np.int32(DimYi), np.int32(DimZi), block = bdim, grid=gdim)
+                func(Ixrs_gpu, np.int32(DimX), Iyrs_gpu, np.int32(DimY), H2D_gpu,
+                     X_gpu, Y_gpu, posx_gpu, posy_gpu, posz_gpu, loop_gpu,
+                     np.int32(DimXi), np.int32(DimYi), np.int32(DimZi),
+                     block = bdim, grid=gdim)
             
                 # Freeing memory between loops
                 H2Di = H2D_gpu.get()
@@ -1032,7 +1073,7 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
                 H2D[i*DimS:(i+1)*DimS] = H2Di*step*1e-7
                 
                 print('Finished loop number ' + str(i+1))
-                toc = timeit.default_timer();
+                toc = time.time();
                 
                 Loop_time = (Loop_time + (toc - tic))/(i+1) # s            
         
@@ -1064,9 +1105,12 @@ def gpu_fieldv2(Ixrs,Iyrs,posx,posy,posz):
     dx = np.absolute(posx[1] - posx[0])
     dy = np.absolute(posy[1] - posy[0])
     dz = np.absolute(posz[1] - posz[0])
-               
+    
+    toc_1 = time.time()
+    
+    _total_time(tic_0, toc_1, device_id, DimC, Dim)
+    
     return Field(Brfx,Brfy,Brfz,Brf,posx,posy,posz,dx,dy,dz)
-
 
 def angle(vector1, vector2):
     
@@ -1140,219 +1184,3 @@ def rotationmatrix(fi=0., theta=0., verbosity = False):
         print(M)
         
     return M
-
-""" ##################### LOAD FILES ##################################### """
-
-class pth:
-    "Class that contains the functions to import and manipulate paths"
-
-
-    @classmethod
-    def file(self):
-        """
-        Function that loads a single file path.
-        
-        Returns
-        -------
-        path: str
-            Path of the file
-        file: str
-            Name of the file
-        directory: str 
-            Directory of the file
-        """
- 
-        
-        try:
-            root=tk.Tk() # It helps to display the root window
-            root.withdraw() # Hide a small window openned by tkinter
-            root.attributes("-topmost", True)
-            path = tk.filedialog.askopenfilename(parent=root) # Shows dialog box and return the path of the file
-            root.destroy()
-            file = os.path.basename(path) # Get the name of the file
-            dirpath = os.path.dirname(path) # Get the directory path of the file
-            
-            return path, file, dirpath
-
-        except:
-            raise Exception('the path cannot be imported')
-            return None    
-
-    @classmethod
-    def folder(self):
-        """
-        Function that loads a single folder path.
-        
-        Returns
-        -------
-        path: str
-            Path of the folder
-        """
- 
-        
-        try:
-            root=tk.Tk() # It helps to display the root window
-            root.withdraw() # Hide a small window openned by tkinter
-            root.attributes("-topmost", True)
-            path = tk.filedialog.askdirectory(parent=root) # Shows dialog box and return the path of the file
-            root.destroy()
-            
-            return path
-
-        except:
-            raise Exception('the path cannot be imported')
-            return None
-        
-
-    @classmethod
-    def files(self):
-        """
-        Function that loads several selected file paths.
-        
-        Returns
-        -------
-        path: string
-            Path of the files
-        file: string
-            Name of the files
-        directory: string
-            Directory of the files
-        """
-
-        try:        
-            root=tk.Tk() # It helps to display the root window
-            root.withdraw() # Hide a small window openned by tkinter
-            root.attributes("-topmost", True)
-            path = tk.filedialog.askopenfilenames(title='Select multiple files') # Shows dialog box and return the path of the file
-            files = [os.path.basename(f) for f in path if '.ini' not in f] # Get a list of the name of the files
-            files = natsorted(files) # Sorted the files naturally (in case it contains numbers)
-            dirpath = os.path.dirname(path[0]) # Get the directoy path of the files
-            
-            return list(path), list(files), dirpath
-
-        except:
-            raise Exception('the paths cannot be imported')
-            return None    
-    
-    
-    
-    @classmethod  
-    def dirfiles(self, name=None, ext = None):
-        """Function that reads all the files in the selected folder, files can be filtered by name and extension.
-        
-        Parameters
-        ----------
-        
-        name: string, default None
-            Name of the file to be filtered
-        ext: string, default None
-            Extension of the file to be filtered
-            
-        Returns
-        -------
-        path: str
-            Path of the file
-        file: str
-            Name of the file
-        directory: str 
-            Directory of the file
-        """
-        
-        try:
-            root=tk.Tk() # It helps to display the root window
-            root.withdraw() # Hide a small window openned by tkinter
-            dirpath = tk.filedialog.askdirectory(title='Select directory') # Shows dialog box and return the path of the file   
-            
-            if name == None and ext == None: # If name and extension not used, import every file
-                files = [f for f in os.listdir(dirpath) if '.ini' not in f]
-                files = natsorted(files)   
-                
-            elif name == None and ext != None: # Import files with the extension used
-                files = [f for f in os.listdir(dirpath) if '.ini' not in f and ext in f]
-                files = natsorted(files)
-                
-            elif name != None and ext == None:# Import files with the name used
-                files = [f for f in os.listdir(dirpath) if name in f and '.ini' not in f]
-                files = natsorted(files)
-                
-            else: # Import files with the extension and name
-                files = [f for f in os.listdir(dirpath) if name in f and '.ini' not in f and ext in f]
-                files = natsorted(files) 
-                   
-            path = []
-            for i in files: # Append every file path
-                path.append(os.path.join(dirpath, i))
-        
-    
-            return path, files, dirpath 
-    
-        except:
-            raise Exception('the files from the directory cannot be imported')
-            return None
-
-
-
-    @classmethod 
-    def resultsfolder(self, dirpath, name = None): 
-        """
-        Function that checks if a the folder exists, if not, creates a folder called 'Output'.
-        
-        Parameters
-        ----------
-        
-        dirpath: string
-            Full path where the folder will be created
-        name: string, default None
-            Name of the created folder, if None, name = Output
-            
-        Returns
-        -------
-        fdir: string
-            Full path of the folder
-        """
-        
-        try:
-            if name == None:
-                fdir = os.path.join(dirpath,'Output') # Get the path with the name of the file without the extension
-            
-            else:
-                fdir = os.path.join(dirpath, name) # Get the path with the name of the file without the extension        
-            
-            if os.path.exists(fdir): # Check if the folder already exists
-                None
-            else: # If not, then creates the folder
-                os.mkdir(fdir) # Creates the new folder in the specified path     
-            return fdir
-    
-        except:
-            raise Exception('not possible to create the results folder')
-            return None
-
-
-
-    @classmethod 
-    def renamefiles(self, original, replace): # Useful to replace a lot of file names
-        """
-        Function that renames the selected files.
-        
-        Parameters
-        ----------
-        
-        original: string
-            Part of the name to change
-        replace: string
-            New name part replacing the original
-            
-        Returns
-        -------
-        None
-        """
-        
-        path, files, dirpath = self.files() # Uses the file function
-        try:
-            for index, file in enumerate(files): # Loop for rename each file with the new name
-                os.rename(os.path.join(dirpath,file), os.path.join(dirpath, file.replace(original, replace)))
-        except:
-            raise Exception('file names cannot be replaced')
-            
-###############################################################################
