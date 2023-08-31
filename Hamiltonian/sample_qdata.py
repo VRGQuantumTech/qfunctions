@@ -1,121 +1,90 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Aug  7 10:48:14 2023
+Created on Mon Aug 31 10:48:14 2023
 
 @author: Victor
 
 Sample Quantum Data (sample_qdata).
 This library consists in two classes, Sample and QData.
 Sample is the class with all the Hamiltonian parameters for different samples.
-QData is the class with all methods to diagonalize the Hamiltonian after building
-it with class Sample.
+QData is the class with all methods to diagonalize it, calculate and plot the energy levels and energy
+transitions of the Hamiltonian after building it with class Sample.
       
-# v0.1 - Work in progress.
+# v0.2 - Minor changes in Sample class:
+         Try - Exception paradigm added to give an error if user does not use string as a name
+         Added an else condition to raise Exception if the name given by user does not
+               correspond to a valid sample               
+         Reworked QData class with new methods.
+         NEW METHODS IN QDATA:
+         qdata.eigenvalues() diagonalizes and calculates de eigenvalues and eigenstates of a Hamiltonian.
+         qdata.elevels() calculates and plots the energy levels (using qdata.eigenvalues) as a function
+               of external magnetic field from an initial magnetic field value Bi to a final magnetic
+               field value Bf.
+         qdata.transitions() caculates the energy transitions for a given Hamiltonian.
 
 """
 
 import qutip
 import numpy as np
-
-class Sample():
+                     
+class sample():
     
     "Sample Class has all the information regarding to the Hamiltonian we are working with."
     
-    def __init__(sample, S,I,NS,NI,NJ,Ap,Az,p,Ix,Iy,Iz,Sx,Sy,Sz,ge,gi,E,kp,D,kz,Ms,Mi,ist_ab,density,B_steven,J):
+    def __init__(self, S,I,NS,NI,NJ,Ap,Az,p,Ix,Iy,Iz,Sx,Sy,Sz,ge,gi,E,kp,D,kz,Ms,Mi,ist_ab,density,B_steven,J,name):
         
-        sample.S = S # electronic spin
-        sample.I = I # nuclear spin
-        sample.NS = NS # Electronic Spin Dimension
-        sample.NI = NI # Nuclear Spin Dimension
-        sample.NJ = NJ # Total Spin Dimension
-        sample.Ap = Ap # Perpendicular Hyperfine constant
-        sample.Az = Az # Z - Hyperfine constant
-        sample.p = p # Quadrupolar Interaction constant
-        sample.Ix = Ix # Nuclear Spin X qutip matrix
-        sample.Iy = Iy # Nuclear Spin Y qutip matrix
-        sample.Iz = Iz # Nuclear Spin Z qutip matrix
-        sample.Sx = Sx # Electronic Spin X qutip matrix
-        sample.Sy = Sy # Electronic Spin Y qutip matrix
-        sample.Sz = Sz # Electronic Spin Z qutip matrix
-        sample.ge = ge # Electronic giromagnetic constant (Zeeman term)
-        sample.gi = gi # Nuclear giromagnetic constant (Zeeman term)
-        sample.E = E # Coupling induced by local strain 
-        sample.kp = kp # Coupling induced by electric fields
-        sample.D = D # Zero field splitting induced by local strain
-        sample.kz = kz # Zero field splitting induced by electric fields
-        sample.Ms = Ms # Electronic spin states vector
-        sample.Mi = Mi # Nuclear spin states vector
-        sample.ist_ab = ist_ab # Isotopical concentration
-        sample.density = density # Spin density
-        sample.B_steven = B_steven # Bij paramenters for high-order Oij operators
-        sample.J = J # Exchange interaction value
-        
-    def hamiltonian(sample, B_ext = np.array([0,0,0]), E_ext = np.array([0,0,0])):
-        
-        # This function calculates a general Hamiltonian given a set of values and arrays.
-        # It returns a single array H.
-        
-        "ELECTRONIC ZEEMAN PARAMETERS"
-        mu_B = 9.27401e-24 / 6.6261e-34 #Hz/T
-        
-        "PLUS AND MINUS SPIN OPERATORS"
-        Sp = sample.Sx + 1j*sample.Sy
-        Sm = sample.Sx - 1j*sample.Sy
-        
-        "SQUARED OPERATORS"
-        S2=sample.Sx*sample.Sx+sample.Sy*sample.Sy+sample.Sz*sample.Sz
-        #I2=sample.Ix*sample.Ix+sample.Iy*sample.Iy+sample.Iz*sample.Iz
-        
-        "ELECTRONIC ZEEMAN INTERACTION"
-        ZE11 = mu_B*sample.ge[0]*B_ext[0]*qutip.tensor(sample.Sx,qutip.qeye(sample.NI))
-        ZE22 = mu_B*sample.ge[1]*B_ext[1]*qutip.tensor(sample.Sy,qutip.qeye(sample.NI))
-        ZE33 = mu_B*sample.ge[2]*B_ext[2]*qutip.tensor(sample.Sz,qutip.qeye(sample.NI))
-        
-        
-        "NUCLEAR ZEEMAN PARAMETERS"
-      
-        mu_N = 5.05078E-27 / 6.6261e-34 #Hz/T
-        
-        "NUCLEAR ZEEMAN INTERACTION"
-        
-        NZE11 = mu_N*sample.gi*B_ext[0]*qutip.tensor(qutip.qeye(sample.NS), sample.Ix)
-        NZE22 = mu_N*sample.gi*B_ext[1]*qutip.tensor(qutip.qeye(sample.NS), sample.Iy)
-        NZE33 = mu_N*sample.gi*B_ext[2]*qutip.tensor(qutip.qeye(sample.NS), sample.Iz)
-            
-        "HYPERFINE INTERACTION"
-        HF11 = sample.Ap*qutip.tensor(sample.Sx,sample.Ix)
-        HF22 = sample.Ap*qutip.tensor(sample.Sy,sample.Iy)
-        HF33 = sample.Az*qutip.tensor(sample.Sz,sample.Iz)
-        
-        "QUADRUPOLAR INTERACTION NUCLEAR SPIN"
-        Q33 = sample.p*qutip.tensor(qutip.qeye(sample.NS),sample.Iz)**2
-            
-        "QUDRUPOLAR INTERACTION ELECTRONIC SPIN (ZERO FIELD SPLITTING TERM)"
-        QE33 = (sample.D + sample.kz*E_ext[2])*qutip.tensor(sample.Sz, qutip.qeye(sample.NI))**2
-        
-        
-        "STRAIN INTERACTION"
-        STI = (sample.E + sample.kp*E_ext[0])*qutip.tensor(sample.Sx, qutip.qeye(sample.NI))**2 - (sample.E + sample.kp*E_ext[1])*qutip.tensor(sample.Sy, qutip.qeye(sample.NI))**2
-            
-            
-        "HIGH ORDER TERMS"
-        O20=sample.B_steven['B20']*qutip.tensor(3*sample.Sz**2-S2,qutip.qeye(sample.NI))
-        O40=sample.B_steven['B40']*qutip.tensor(35*sample.Sz**4-30*S2*sample.Sz**2+25*sample.Sz**2-6*S2+3*S2**2,qutip.qeye(sample.NI))
-        O44=sample.B_steven['B44']*qutip.tensor(0.5*(Sp**4+Sm**4),qutip.qeye(sample.NI))
-        O60=qutip.tensor(231*sample.Sz**6-315*S2*sample.Sz**4+735*sample.Sz**4+105*S2**2*sample.Sz**2-
-                          525*S2*sample.Sz**2+294*sample.Sz**2-5*S2**3+40*S2**2-60*S2,qutip.qeye(sample.NI))
-        O60=sample.B_steven['B60']*O60
-            
-        Oij = O20 + O40 +  O44 + O60 
-        
-        "COMPLETE HAMILTONIAN"
-        H = ZE11 + ZE22 + ZE33 + NZE11 + NZE22 + NZE33 + HF11 + HF22 + HF33 + Q33 + QE33 + STI + Oij
+        self.S = S # electronic spin
+        self.I = I # nuclear spin
+        self.NS = NS # Electronic Spin Dimension
+        self.NI = NI # Nuclear Spin Dimension
+        self.NJ = NJ # Total Spin Dimension
+        self.Ap = Ap # Perpendicular Hyperfine constant
+        self.Az = Az # Z - Hyperfine constant
+        self.p = p # Quadrupolar Interaction constant
+        self.Ix = Ix # Nuclear Spin X qutip matrix
+        self.Iy = Iy # Nuclear Spin Y qutip matrix
+        self.Iz = Iz # Nuclear Spin Z qutip matrix
+        self.Sx = Sx # Electronic Spin X qutip matrix
+        self.Sy = Sy # Electronic Spin Y qutip matrix
+        self.Sz = Sz # Electronic Spin Z qutip matrix
+        self.ge = ge # Electronic giromagnetic constant (Zeeman term)
+        self.gi = gi # Nuclear giromagnetic constant (Zeeman term)
+        self.E = E # Coupling induced by local strain 
+        self.kp = kp # Coupling induced by electric fields
+        self.D = D # Zero field splitting induced by local strain
+        self.kz = kz # Zero field splitting induced by electric fields
+        self.Ms = Ms # Electronic spin states vector
+        self.Mi = Mi # Nuclear spin states vector
+        self.ist_ab = ist_ab # Isotopical concentration
+        self.density = density # Spin density
+        self.B_steven = B_steven # Bij paramenters for high-order Oij operators
+        self.J = J # Exchange interaction value
+        self.name = name # crystal identifier
     
-        return H
-
-    def load_sample(sample):
-    
-        if sample == '171Yb_Trensal':
+    @classmethod
+    def load_sample(self, name):
+        
+        """
+        Function to set sample parameters
+        
+        Parameters
+        -------
+        self: non-initialised class
+        name: crystal identifier
+        
+        Returns
+        -------
+        self: initialised class
+        """
+        crystals = ['171Yb_Trensal','172Yb_Trensal','173Yb_Trensal',
+                    'DPPH','NV_centers','HoW10','VOporf','CNTporf',
+                    'MnBr_Ising']
+        
+        if type(name) != str:
+            raise Exception('input must be a string')
+            return None
+        
+        elif name == '171Yb_Trensal':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 0.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -142,7 +111,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
             
-        if sample == '172Yb_Trensal':
+        elif name == '172Yb_Trensal':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 0.0; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -168,7 +137,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
             
-        if sample == '173Yb_Trensal':
+        elif name == '173Yb_Trensal':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 2.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -199,7 +168,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
             
-        if sample == 'DPPH':
+        elif name == 'DPPH':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 0.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -225,7 +194,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
             
-        if sample == 'NV_centers':
+        elif name == 'NV_centers':
             "SPIN VALUES (dimensionless)"
             S = 1; I = 1; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -252,7 +221,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
         
-        if sample == 'HoW10':
+        elif name == 'HoW10':
             "SPIN VALUES (dimensionless)"
             S = 8; I = 3.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -279,7 +248,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
         
-        if sample == 'MnBr':
+        elif name == 'MnBr':
             "SPIN VALUES (dimensionless)"
             S = 2.5; I = 2.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI; # PRL 110, 027601 (2013)
             "ZEEMAN VALUES (dimensionless)"
@@ -307,7 +276,7 @@ class Sample():
             J = 0. # Hz
             
             
-        if sample == 'VOporf':
+        elif name == 'VOporf':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 3.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -333,7 +302,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
        
-        if sample == 'CNTporf':
+        elif name == 'CNTporf':
             "SPIN VALUES (dimensionless)"
             S = 0.5; I = 3/2; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -360,7 +329,7 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = 0. # Hz
             
-        if sample == 'MnBr_Ising':
+        elif name == 'MnBr_Ising':
             "SPIN VALUES (dimensionless)"
             S = 2.5; I = 2.5; NS = int(2*S + 1); NI = int(2*I + 1); NJ = NS*NI;
             "ZEEMAN VALUES (dimensionless)"
@@ -389,6 +358,15 @@ class Sample():
             "EXCHANGE INTERACTION VALUE"
             J = -0.131*5.21652e9 # Hz
             
+        else:            
+            warning = 'The input crystal type it is not in the database\n'
+            print('\nPlease provide one of these crystal types as a string format:')
+            for i in range(len(crystals)):
+                print('----->' + crystals[i])
+            print('\n')
+            raise Exception(warning)
+            return None
+            
         "ELECTRONIC SPIN STATES VECTOR"
         Ms = np.arange(-1*S, S + 1, 1)
         "NUCLEAR SPIN STATES VECTOR"
@@ -401,245 +379,281 @@ class Sample():
         Sx=qutip.jmat(S,'x'); Sy=qutip.jmat(S,'y'); Sz=qutip.jmat(S,'z')
         Ix=qutip.jmat(I,'x'); Iy=qutip.jmat(I,'y'); Iz=qutip.jmat(I,'z')
               
-        return Sample(S,I,NS,NI,NJ,Ap,Az,p,Ix,Iy,Iz,Sx,Sy,Sz,ge,gi,E,kp,D,kz,Ms,Mi,ist_ab,density,B_steven,J)
+        return self(S,I,NS,NI,NJ,Ap,Az,p,Ix,Iy,Iz,Sx,Sy,Sz,ge,gi,E,kp,D,kz,Ms,Mi,ist_ab,density,B_steven,J,name)
+    
+    def hamiltonian(self, B_ext = np.array([0,0,0]), E_ext = np.array([0,0,0])):
+        
+        # This function calculates a general Hamiltonian given a set of values and arrays.
+        # It returns a single array H.
+        
+        "ELECTRONIC ZEEMAN PARAMETERS"
+        mu_B = 9.27401e-24 / 6.6261e-34 #Hz/T
+        
+        "PLUS AND MINUS SPIN OPERATORS"
+        Sp = self.Sx + 1j*self.Sy
+        Sm = self.Sx - 1j*self.Sy
+        
+        "SQUARED OPERATORS"
+        S2=self.Sx*self.Sx+self.Sy*self.Sy+self.Sz*self.Sz
+        #I2=sample.Ix*sample.Ix+sample.Iy*sample.Iy+sample.Iz*sample.Iz
+        
+        "ELECTRONIC ZEEMAN INTERACTION"
+        ZE11 = mu_B*self.ge[0]*B_ext[0]*qutip.tensor(self.Sx,qutip.qeye(self.NI))
+        ZE22 = mu_B*self.ge[1]*B_ext[1]*qutip.tensor(self.Sy,qutip.qeye(self.NI))
+        ZE33 = mu_B*self.ge[2]*B_ext[2]*qutip.tensor(self.Sz,qutip.qeye(self.NI))
+        
+        
+        "NUCLEAR ZEEMAN PARAMETERS"
+      
+        mu_N = 5.05078E-27 / 6.6261e-34 #Hz/T
+        
+        "NUCLEAR ZEEMAN INTERACTION"
+        
+        NZE11 = mu_N*self.gi*B_ext[0]*qutip.tensor(qutip.qeye(self.NS), self.Ix)
+        NZE22 = mu_N*self.gi*B_ext[1]*qutip.tensor(qutip.qeye(self.NS), self.Iy)
+        NZE33 = mu_N*self.gi*B_ext[2]*qutip.tensor(qutip.qeye(self.NS), self.Iz)
+            
+        "HYPERFINE INTERACTION"
+        HF11 = self.Ap*qutip.tensor(self.Sx,self.Ix)
+        HF22 = self.Ap*qutip.tensor(self.Sy,self.Iy)
+        HF33 = self.Az*qutip.tensor(self.Sz,self.Iz)
+        
+        "QUADRUPOLAR INTERACTION NUCLEAR SPIN"
+        Q33 = self.p*qutip.tensor(qutip.qeye(self.NS),self.Iz)**2
+            
+        "QUDRUPOLAR INTERACTION ELECTRONIC SPIN (ZERO FIELD SPLITTING TERM)"
+        QE33 = (self.D + self.kz*E_ext[2])*qutip.tensor(self.Sz, qutip.qeye(self.NI))**2
+        
+        
+        "STRAIN INTERACTION"
+        STI = (self.E + self.kp*E_ext[0])*qutip.tensor(self.Sx, qutip.qeye(self.NI))**2 - (self.E + self.kp*E_ext[1])*qutip.tensor(self.Sy, qutip.qeye(self.NI))**2
+            
+            
+        "HIGH ORDER TERMS"
+        O20=self.B_steven['B20']*qutip.tensor(3*self.Sz**2-S2,qutip.qeye(self.NI))
+        O40=self.B_steven['B40']*qutip.tensor(35*self.Sz**4-30*S2*self.Sz**2+25*self.Sz**2-6*S2+3*S2**2,qutip.qeye(self.NI))
+        O44=self.B_steven['B44']*qutip.tensor(0.5*(Sp**4+Sm**4),qutip.qeye(self.NI))
+        O60=qutip.tensor(231*self.Sz**6-315*S2*self.Sz**4+735*self.Sz**4+105*S2**2*self.Sz**2-
+                          525*S2*self.Sz**2+294*self.Sz**2-5*S2**3+40*S2**2-60*S2,qutip.qeye(self.NI))
+        O60=self.B_steven['B60']*O60
+            
+        Oij = O20 + O40 +  O44 + O60 
+        
+        "COMPLETE HAMILTONIAN"
+        H = ZE11 + ZE22 + ZE33 + NZE11 + NZE22 + NZE33 + HF11 + HF22 + HF33 + Q33 + QE33 + STI + Oij
+    
+        return H
 
 """ ####################################################################### """
 
-             
+#%%
+
+""" ############################ QDATA ############################# """
+
 class qdata():
     
-    "# qdata Class has all the information regarding to the Hamiltonian after diagonalization"
-
-    def __init__(qdat, Havl, Have, E_NMR, Rabi, E_EPR, ME, f, Th_F):
-        qdat.Havl = Havl
-        qdat.Have = Have
-        qdat.E_NMR = E_NMR
-        qdat.Rabi = Rabi
-        qdat.E_EPR = E_EPR
-        qdat.ME = ME
-        qdat.f = f
-        qdat.Th_F = Th_F
+    """
+    class qdata @ qfunction stores and manages the information obtained after
+    diagonalising the hamiltonian of a sample (the sample information is
+    managed using class sample @ qfunctions)
+    """
+      
+    def __init__(self, havl, have, freq, thf, thp):
+        self.havl = havl # hamiltonian eigenvalues
+        self.have = have # hamiltonian eigenvectors
+        self.freq = freq # hamiltonian energy transitions
+        self.thf = thf # hamiltonian thermal factors
+        self.thp = thp # hamiltonian thermal polarizations
         
-        """#Havl are the eigenvalues of the hamiltonian.
-        #Have are the eigenstates of the hamiltonian.
-        #E_NMR are the frequencies of the NMR transitions.
-        #E_EPR are the frequencies of the EPR transitions.
-        #ME is the NJ x NJ matrix that contains the complex matrix elements for
-        the operator T (user defined).
-        #f is a float number or an array (depending on wether there is a given
-        transition or not) that contains the frequency/ies of the given (or not)
-        transition/s.
-        #Th_F is the thermal factor for each pair of transitions"""
         
-    def thermfactor(Havl,T):
+    @classmethod    
+    def eigenvalues(self, smpl, B_ext):
         
-        # Havl is the result of diagonalizing the Hamiltonian. It has NJ eigenvalues.
-        # T is the temperature
-        # G is the ground level for the calculation
-        # E is the excited level for the calculation
-    
-        "PARTITION FUNCTION"
+        """
+        Function to build and diagonalize the crystal Hamiltonian.
         
-        # Havl has frequency units (Hz)
-        K = 1.38064852e-23 # J/K
-        E_T = K*T/6.6261e-34 # Hz
+        Parameters
+        -------
+        smpl: a qfunction sample object carrying the information of the crystal Hamiltonian.
+        B_ext: external (DC) magnetic field in molecule coordinate system.
         
-        # Partition vector Zi
-        Zi = np.exp(-(Havl - np.amin(Havl))/E_T)
+        Returns
+        -------
+        self.havl: qdata value with the eigenstates of the Hamiltonian at a particular
+                   external DC magnetic field.
+        self.have: qdata value with the eigenvectors of the Hamiltonian at a particular
+                   external DC magnetic field.
+        """
         
-        # Sum of all partition elements
-        Z = np.sum(Zi)
-        
-        "THERMAL FACTOR"
-        P = Zi/Z # M - B distribution
-        
-        "BOSONIC OCCUPATION NUMBER"
-        # Nbos = 1 + 1/((Zi(G)/Zi(E)-1)
-                      
-        # Th_f = P*Nbos
-        Th_f = P
-                      
-        return Th_f
-    
-    def coupling(smpl, B_ext = np.array([0,0,0]), Temp = 0, T = 0, G = 0, E = 0, name = None):
-    
-        """# IF T,G AND E ARE GIVEN: This function calculates the matrix
-        elements for a given operator T between the levels G (ground) and E
-        (excited) for a molecule with electronic spinc S and nuclear spin I in
-        a magnetic field B (Teslas). It gives back QData.ME, a 2 x 2 array
-        that contains the four matrix elements for the given levels (G,E)
-        in their complex form. It also gives back QData.GC, a 2 x 2 array that
-        contains the modulus of the four matrix elements for the given levels
-        (G,E). It also gives back QData.f, a float number that contains the
-        frequency (in GHz) for the (G,E) transition. 
-        
-        # IF G AND E ARE CERO AND T IS GIVEN: This function calculates the
-        matrix elements for all the transitions. It gives back QData.ME, a
-        NJ x NJ array contains the matrix elements in their complex form for
-        all of the possible transitions. It also gives back QData.GC, a
-        NJ x NJ array contains the modulus of matrix elements for all of the
-        possible transitions. It also gives back QData.f, a NJ x NJ array that
-        contains the frequencies (in GHz) for all of the possible transitions.
-        
-        # IF T, G AND E ARE CERO: This function calculates E_NMR, a 8*I x 1
-        array that contains the energy value for the all of the NMR transitions
-        in the molecule. It also calculates E_EPR a NJ x 1 array that contains
-        the energy value for all the EPR transitions in the molecule.
-        
-        # IN EVERY CASE, THE FUNCTION ALWAYS GIVES BACK QData.Havl, a vector
-        of NJ x 1 dimensions the contains the eigenvalues of the 
-        hamiltonian H."""
-    
-        # Here we are going to save the results
-        E_NMR = np.zeros((smpl.NJ*smpl.NJ,3))
-        #Rabi_NMR = np.zeros((Sample.NJ*Sample.NJ))
-        E_EPR = np.zeros((smpl.NJ,3))
-        c_nmr = 0 # NMR transitions counter
-        
-        """if Sample.J != 0:
-            H = ising_hamiltonian(Sample, B)
-        else:
-            H = Sample.hamiltonian(Sample, B)"""
-        
-        H = Sample.hamiltonian(smpl, B_ext)
+        if type(smpl) != sample:
+            raise Exception('1st input must be a qfunctions sample class variable')
+            return None
+            
+        # Hamiltonian calculation
+        H = smpl.hamiltonian(B_ext)
         
         # Eigenstates calculation
         HD = H.eigenstates()
         
-        # HD has the eigenvalues in the first component (0) and the eigenvectors in the second component (1)
-        Havl = HD[0] # Hz
-        Have = HD[1] # No Units
-        # No Units. Thermal factor P for each energy level
+        # HD has the eigenvalues in the first component (0) and the
+        # eigenvectors in the second component (1)
+        self.havl = HD[0] # Hz
+        self.have = HD[1] # No units
         
-        if G == 0 and E == 0 and T == 0:
-            
-            Rabi = np.zeros((smpl.NJ,smpl.NJ) , dtype = float) # RABI FREQ/Brf FOR ALL TRANSITIONS
-            ME = np.zeros((smpl.NJ,smpl.NJ) , dtype = complex)
-            Th_F = 0
-            f = 0
-            
-            if Temp != 0:
-                Th_F = qdata.thermfactor(Havl,Temp)
-            
-            if name != 'HoW10':
-                for i in range(smpl.NJ):              
-                    for k in range(smpl.NJ):
-                    
-                        # NOT EPR TRANSITIONS
-                        if (i != smpl.NJ - (k+1)):
-                            if (k != smpl.NJ - (i+1)):
-                                                                          
-                                E_NMR[c_nmr,0] = Havl[i]-Havl[k] #E_i - E_k
-                                E_NMR[c_nmr,1] = k # ground
-                                E_NMR[c_nmr,2] = i # excited
-                                c_nmr = c_nmr + 1
-                    
-                        # EPR TRANSITIONS
-                        elif i == smpl.NJ - (k+1): 
-                            E_EPR[k,0] = Havl[i]-Havl[k] #E_i - E_k
-                            E_EPR[k,1] = k # ground
-                            E_EPR[k,2] = i # excited
-                    
-                        # EPR TRANSITIONS
-                        elif k == smpl.NJ - (i+1): 
-                            E_EPR[k,0] = Havl[i]-Havl[k] #E_i - E_k
-                            E_EPR[k,1] = k # ground
-                            E_EPR[k,2] = i # excited
+        return self.havl, self.have
+    
+    @classmethod
+    def elevels(self, smpl, Bi=0.0, Bf=0.1, n=101, angles = {'angle': 0., 'fi': 0., 'theta': 0.},
+                plot = False, store = False, xmax = 0, xmin = 0, ymax = 0, ymin = 0, fmt = 'png',
+                verbosity = False):
         
-            # CLOCK TRANSITIONS IN PARTICULAR CASES
-            if name == 'HoW10':
-                E_EPR = np.zeros((1,3))
-                E_EPR[0,0] = Havl[8]-Havl[7]
-                E_EPR[0,1] = 7 # ground
-                E_EPR[0,2] = 8 # excited
+        B = np.array([0.,0.,0.])
+        Bplot = np.zeros(n)
+        BP = abs(Bf-Bi)/n
+        Bmod = Bi
         
-        # CALCULATES MATRIX ELEMENTS FOR OPERATOR T BETWEEN ALL LEVEL PAIRS
-        # T in Hz/T
-        elif G == 0 and E == 0 and T != 0:
-                    
-            ME = np.zeros((smpl.NJ,smpl.NJ) , dtype = complex) # MATRIX ELEMENTS IN COMPLEX FORM
-            f = np.zeros((smpl.NJ,smpl.NJ) , dtype = float) # FREQUENCIES FOR ALL TRANSITIONS
-            Th_F = np.zeros((smpl.NJ,smpl.NJ) , dtype = float) # THERMAL FACTOR FOR ALL TRANSITIONS    
-            Rabi = np.zeros((smpl.NJ,smpl.NJ) , dtype = float) # RABI FREQ/Brf FOR ALL TRANSITIONS
+        M = rotationmatrix(angles['fi']*np.pi/180, angles['theta']*np.pi/180, verbosity = verbosity)
+        
+        Havl = np.zeros((n,smpl.NJ))
+        
+        for l in range(n):   
             
-            if Temp != 0:
-                Th_f = qdata.thermfactor(Havl,Temp)
+            # Updating B coordinates
+            B[0] = Bmod*np.sin(angles['angle']) # T
+            B[1] = 0
+            B[2] = Bmod*np.cos(angles['angle'])  # T
+            
+            B_mol = M.dot(B) #updating B in molecular axes
+            
+            if verbosity == True:
+                print('Lab coord sys:')
+                print(B)
+                print('Mol coord sys:')
+                print(B_mol)
+                            
+            Havl[l,:],_ = qdata.eigenvalues(smpl,B_mol)
+            Bplot[l] = Bmod
+            Bmod = Bmod + BP # Actual magnetic field module
+            
+        if plot == True:
+            
+            if verbosity == True:
+                print('Plotting energy levels')
                 
-            for i in range(smpl.NJ): # Excited - rows
-                for k in range(smpl.NJ): # Ground - columns
-                    if i == k:
-                        ME[i,k] = 0
-                        f[i,k] = (Havl[i] - Havl[k]) # Hz
-                        Th_F[i,k] = 0
-                    else:
-                        ME[i,k] = T.matrix_element((Have[i].unit()).dag() , Have[k].unit()) # Hz/T
-                        f[i,k] = (Havl[i] - Havl[k]) # Hz
-                        if Temp != 0:
-                            Th_F[i,k] = abs(Th_f[i] - Th_f[k])
+            plt.figure('Energy levels ' + smpl.name)            
+            for i in range(smpl.NJ):
+                plt.plot(Bplot*1e3, Havl[:,i]*1e-9)
+ 
+            plt.xlabel(r'$\mu_0$' + 'H (mT)' , fontsize = 14, fontweight='bold')
+            plt.xticks(fontsize = 14)
+            plt.ylabel('Frequency (GHz)' , fontsize = 14, fontweight='bold')
+            plt.yticks(fontsize = 14)
+            if xmax == xmin: plt.xlim(Bi*1e3,Bf*1e3)
+            else: plt.xlim(xmin,xmax)
+            if ymax != ymin: plt.ylim(ymin,ymax)
+            plt.locator_params(axis='y', nbins=5)
+            plt.tick_params(direction = 'in')
+            plt.ticklabel_format(useOffset=False)
+            plt.title('Energy levels ' + smpl.name, fontsize = 14, fontweight='bold')
+            text = r"$\theta$" + ' = %.2f deg \n'%(angles['theta']) + r"$\varphi$" + ' = %.2f deg'%(angles['fi'])
+            plt.figtext(1.575, 0.225, text, fontsize = 12, bbox = dict(facecolor='white', edgecolor='black', boxstyle='round', alpha = 0.15))
+            
+            if store == True:
+                
+                dirpath = pth.folder() + '/' + smpl.name
+                print('Saving plot at %s' %dirpath)
+                dirpath = dirpath + '/Energies/'
+                file_name = 'Elevels_Theta%.2fdeg_Fi%.2fdeg.' %(angles['theta'],angles['fi'])
+                Arr = np.zeros((n,smpl.NJ+1))
+                Arr[:,0] = Bplot
+                Arr[:,1:] = Havl
+                if not os.path.exists(dirpath):
+                    os.makedirs(dirpath)
+                    
+                plt.savefig(dirpath + file_name + fmt, dpi = 2048, bbox_inches='tight') 
+                np.savetxt(dirpath + file_name +'txt' , Arr, fmt='%s') 
+                    
+            plt.show()
+                    
+        return Havl, Bplot
+
+
+    @classmethod
+    def transitions(self, smpl, Bi=0.0, Bf=0.1, n=101, angles = {'angle': 0., 'fi': 0., 'theta': 0.},
+                plot = False, store = False, xmax = 0, xmin = 0, ymax = 0, ymin = 0, fmt = 'png',
+                verbosity = False, index = [], experimental = {}, lw=2.5, legend=True):
+        
+        Havl, Bplot = qdata.elevels(smpl, Bi, Bf, n, angles = angles,
+                    xmax = xmax, xmin = xmin, ymax = ymax, ymin = ymin,
+                    fmt = 'png', verbosity = verbosity)
+        
+        freqs = np.zeros((n, smpl.NJ*smpl.NJ))
+        
+        for i in range(smpl.NJ):
+            for j in range(smpl.NJ):
+                    freqs[:,i*smpl.NJ+j] = Havl[:,j] - Havl[:,i]
+        
+        if plot == True:
+            
+            if verbosity == True:
+                print('Plotting energy transitions')
+                
+            plt.figure('Energy transitions ' + smpl.name)
+            
+            if index == []:
+                for i in range(smpl.NJ*smpl.NJ):
+                    plt.plot(Bplot*1e3, freqs[:,i]*1e-9)
+            else:
+                if type(index)!=list:
+                    raise Exception('please provide the transitions in a list format \n')
+                else:
+                    for i in range(len(index)):
+                        label='%i -> %i'%(index[i][0],index[i][1])
+                        plt.plot(Bplot*1e3, freqs[:,index[i][0]*smpl.NJ+index[i][1]]*1e-9,
+                                 lw=lw,label=label)
                         
-                        # NMR TRANSITIONS
-                        if i == k + 1 and k != int(smpl.NJ/2-1) and smpl.I != 0:
-                            # i = 6 k = 5 is an EPR transition
-                            # Only taking into account the allowed ones
-                            E_NMR[c_nmr] = Havl[i]-Havl[k] # E_i - E_k
-                            E_NMR[c_nmr,1] = k # ground
-                            E_NMR[c_nmr,2] = i # excited
-                            
-                            c_nmr = c_nmr + 1
-                    
-                        # NMR TRANSITIONS
-                        elif i == k - 1 and k != int(smpl.NJ/2) and smpl.I != 0 :
-                            # i = 5 k = 6 is an EPR transition
-                            # Only taking into account the allowed ones
-                            E_NMR[c_nmr] = Havl[i]-Havl[k] # E_i - E_k
-                            E_NMR[c_nmr,1] = k # ground
-                            E_NMR[c_nmr,2] = i # excited
-                            c_nmr = c_nmr + 1
-                            
-                        # EPR TRANSITIONS
-                        elif i == smpl.NJ - (k+1): 
-                            E_EPR[k,0] = Havl[i]-Havl[k] #E_i - E_k
-                            E_EPR[k,1] = k # ground
-                            E_EPR[k,2] = i # excited
-                    
-                        # EPR TRANSITIONS
-                        elif k == smpl.NJ - (i+1): 
-                            E_EPR[k,0] = Havl[i]-Havl[k] #E_i - E_k
-                            E_EPR[k,1] = k # ground
-                            E_EPR[k,2] = i # excited                        
-                            
-            Rabi = np.absolute(ME) # Hz/T
+            if experimental.keys() != []:
+                n = 0
+                for i in experimental.keys():
+                    if i == 'frequencies':
+                        for j in experimental['frequencies']:
+                            plt.hlines(j*1e-9, -1000, 1000, color = 'gray', linestyles = 'dashed') #
+                    else:
+                        f = np.zeros(len(experimental[i]))
+                        for j in range(len(f)): f[j] = experimental['frequencies'][n]       
+                        plt.scatter(np.array(experimental[i])*1e3, f*1e-9, s = 80, facecolors='gray', edgecolors='k', zorder=3)
+                        n=n+1           
+ 
+            plt.xlabel(r'$\mu_0$' + 'H (mT)' , fontsize = 14, fontweight='bold')
+            plt.xticks(fontsize = 14)
+            plt.ylabel('Frequency (GHz)' , fontsize = 14, fontweight='bold')
+            plt.yticks(fontsize = 14)
+            if xmax == xmin: plt.xlim(Bi*1e3,Bf*1e3)
+            else: plt.xlim(xmin,xmax)
+            if ymax != ymin: plt.ylim(ymin,ymax)
+            plt.locator_params(axis='y', nbins=5)
+            plt.tick_params(direction = 'in')
+            plt.ticklabel_format(useOffset=False)
+            if legend == True: plt.legend()
+            plt.title('Energy transitions ' + smpl.name, fontsize = 14, fontweight='bold')
+            text = r"$\theta$" + ' = %.2f deg \n'%(angles['theta']) + r"$\varphi$" + ' = %.2f deg'%(angles['fi'])
+            plt.figtext(1.0, 0.8, text, fontsize = 12, bbox = dict(facecolor='white', edgecolor='black', boxstyle='round', alpha = 0.15))
             
-        else:
-            
-            ME = np.zeros((2,2) , dtype = complex)
-            Th_F = np.zeros((2,2) , dtype = float)
-            
-            if Temp != 0:
-                Th_f = qdata.thermfactor(Havl,Temp)
+            if store == True:
                 
-            f = 0
-            
-            ME[0,0] = T.matrix_element((Have[G].unit()).dag() , Have[G].unit())
-            
-            if Temp != 0:
-                Th_F[0,0] = abs(Th_f[G] - Th_f[G])
-                              
-            ME[1,1] = T.matrix_element((Have[E].unit()).dag() , Have[E].unit())
-            if Temp != 0:
-                Th_F[1,1] = abs(Th_f[E] - Th_f[E])
-            
-            ME[0,1] = T.matrix_element((Have[E].unit()).dag() , Have[G].unit())
-            if Temp != 0:
-                Th_F[0,1] = abs(Th_f[E] - Th_f[G])
-            
-            ME[1,0] = np.conj(ME[0,1])
-            Th_F[1,0] = Th_F[0,1]
-            
-            Rabi = np.absolute(ME)
-            
-            f = (Havl[E] - Havl[G])/(1e9) #GHz
-                       
-        return qdata(Havl,Have,E_NMR,Rabi,E_EPR,ME,f,Th_F)
-                     
-" ######################################################################### "
+                dirpath = pth.folder() + '/' + smpl.name
+                print('Saving plot at %s' %dirpath)
+                dirpath = dirpath + '/Energies/'
+                file_name = 'Etransitions_Theta%.2fdeg_Fi%.2fdeg.' %(angles['theta'],angles['fi'])
+                Arr = np.zeros((n,smpl.NJ*smpl.NJ+1))
+                Arr[:,0] = Bplot
+                Arr[:,1:] = freqs
+                if not os.path.exists(dirpath):
+                    os.makedirs(dirpath)
+                    
+                plt.savefig(dirpath + file_name + fmt, dpi = 2048, bbox_inches='tight') 
+                np.savetxt(dirpath + file_name +'txt' , Arr, fmt='%s') 
+                    
+            plt.show()
+                    
+        return freqs, Bplot
