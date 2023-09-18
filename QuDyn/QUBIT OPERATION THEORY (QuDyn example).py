@@ -247,6 +247,7 @@ for i in range(len(Ω)):
     rho00[i] = rho00_aux[-1]
     rho01[i] = rho01_aux[-1]
 
+print('hello')
 #envelope = 0.5 + 0.5*np.exp(-(0.5*ɣ1 + 0.5*ɣ2)*Δt)
 
 path_to_save = pth.folder()
