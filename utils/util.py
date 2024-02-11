@@ -148,14 +148,71 @@ class plot():
 
 class Solver():
     
+    """
+    A class that provides methods to solve polynomial equations.
+    """  
+    
+    @staticmethod
     def cubic(a, b, c, d):
+        
+        """
+        Solves a cubic equation of the form ax^3 + bx^2 + cx + d = 0.
 
-        if (a == 0 and b == 0):                     # Case for handling Liner Equation
-            return np.array([(-d * 1.0) / c])                 # Returning linear root as numpy array.
+        This method employs analytical formulae to find the roots of a cubic
+        equation. It handles different cases including linear, quadratic, and
+        cubic equations based on the provided coefficients. The cubic equation
+        solution covers scenarios yielding three real and equal roots,
+        three real and unequal roots, or one real and two complex conjugate roots.
 
-        elif (a == 0):                              # Case for handling Quadratic Equations
+        Parameters
+        ----------
+        a : float
+            The coefficient of the cubic term (x^3).
+        b : float
+            The coefficient of the quadratic term (x^2).
+        c : float
+            The coefficient of the linear term (x).
+        d : float
+            The constant term.
 
-            D = c * c - 4.0 * b * d                       # Helper Temporary Variable
+        Returns
+        -------
+        numpy.ndarray
+            An array of roots. This array could contain one, two, or three
+            elements depending on the nature of the roots found (real or
+            complex).
+
+        Examples
+        --------
+        Solve the equation x^3 - 6x^2 + 11x - 6 = 0:
+
+        >>> Solver.cubic(1, -6, 11, -6)
+        array([1., 2., 3.])
+
+        Solve the equation 2x^2 - 4x + 2 = 0 (a cubic equation with a = 0):
+
+        >>> Solver.cubic(0, 2, -4, 2)
+        array([1.+0.j, 1.-0.j])
+
+        Note
+        ----
+        The method correctly handles:
+        - Linear equations when a = 0 and b = 0.
+        - Quadratic equations when a = 0.
+        - Cubic equations with various root scenarios, including complex roots.
+        """
+
+        if (a == 0 and b == 0):
+            # Case for handling Liner Equation             
+            
+            # Returning linear root as numpy array.
+            return np.array([(-d * 1.0) / c])       
+
+        elif (a == 0):
+            # Case for handling Quadratic Equations                             
+            
+            # Helper Temporary Variable
+            D = c * c - 4.0 * b * d                 
             if D >= 0:
                 D = mt.sqrt(D)
                 x1 = (-c + D) / (2.0 * b)
@@ -164,53 +221,155 @@ class Solver():
                 D = mt.sqrt(-D)
                 x1 = (-c + D * 1j) / (2.0 * b)
                 x2 = (-c - D * 1j) / (2.0 * b)
-                
-            return np.array([x1, x2])               # Returning Quadratic Roots as numpy array.
+            
+            # Returning Quadratic Roots as numpy array.
+            return np.array([x1, x2])               
 
-        f = _findF(a, b, c)                          # Helper Temporary Variable
-        g = _findG(a, b, c, d)                       # Helper Temporary Variable
-        h = _findH(g, f)                             # Helper Temporary Variable
+        ''' Helper Temporary Variables '''
+        
+        f = _findF(a, b, c)                          
+        g = _findG(a, b, c, d)                       
+        h = _findH(g, f)           
+        
+        ''' -------------------------- '''                 
 
-        if f == 0 and g == 0 and h == 0:            # All 3 Roots are Real and Equal
+        if f == 0 and g == 0 and h == 0:
+            # All 3 Roots are Real and Equal            
             if (d / a) >= 0:
                 x = (d / (1.0 * a)) ** (1 / 3.0) * -1
             else:
                 x = (-d / (1.0 * a)) ** (1 / 3.0)
-            return np.array([x, x, x])              # Returning Equal Roots as numpy array.
+            
+            # Returning Equal Roots as numpy array.
+            return np.array([x, x, x])             
 
-        elif h <= 0:                                # All 3 roots are Real
+        elif h <= 0:
+            # All 3 roots are Real
 
-            i = mt.sqrt(((g ** 2.0) / 4.0) - h)   # Helper Temporary Variable
-            j = i ** (1 / 3.0)                      # Helper Temporary Variable
-            k = mt.acos(-(g / (2 * i)))           # Helper Temporary Variable
-            L = j * -1                              # Helper Temporary Variable
-            M = mt.cos(k / 3.0)                   # Helper Temporary Variable
-            N = mt.sqrt(3) * mt.sin(k / 3.0)    # Helper Temporary Variable
-            P = (b / (3.0 * a)) * -1                # Helper Temporary Variable
+            ''' Helper Temporary Variables '''
+            
+            i = mt.sqrt(((g ** 2.0) / 4.0) - h)  
+            j = i ** (1 / 3.0)                    
+            k = mt.acos(-(g / (2 * i)))      
+            L = j * -1                   
+            M = mt.cos(k / 3.0)                 
+            N = mt.sqrt(3) * mt.sin(k / 3.0)   
+            P = (b / (3.0 * a)) * -1
+            
+            ''' -------------------------- '''
 
             x1 = 2 * j * mt.cos(k / 3.0) - (b / (3.0 * a))
             x2 = L * (M + N) + P
             x3 = L * (M - N) + P
+            
+            # Returning Real Roots as numpy array.
+            return np.array([x1, x2, x3])           
 
-            return np.array([x1, x2, x3])           # Returning Real Roots as numpy array.
-
-        elif h > 0:                                 # One Real Root and two Complex Roots
-            R = -(g / 2.0) + mt.sqrt(h)           # Helper Temporary Variable
+        elif h > 0:
+            # One Real Root and two Complex Roots
+            
+            ''' Helper Temporary Variables '''
+            
+            R = -(g / 2.0) + mt.sqrt(h)           
             if R >= 0:
-                S = R ** (1 / 3.0)                  # Helper Temporary Variable
+                S = R ** (1 / 3.0)                 
             else:
-                S = (-R) ** (1 / 3.0) * -1          # Helper Temporary Variable
+                S = (-R) ** (1 / 3.0) * -1          
             T = -(g / 2.0) - mt.sqrt(h)
             if T >= 0:
-                U = (T ** (1 / 3.0))                # Helper Temporary Variable
+                U = (T ** (1 / 3.0))               
             else:
-                U = ((-T) ** (1 / 3.0)) * -1        # Helper Temporary Variable
+                U = ((-T) ** (1 / 3.0)) * -1
+                
+            ''' -------------------------- '''
 
             x1 = (S + U) - (b / (3.0 * a))
             x2 = -(S + U) / 2 - (b / (3.0 * a)) + (S - U) * mt.sqrt(3) * 0.5j
             x3 = -(S + U) / 2 - (b / (3.0 * a)) - (S - U) * mt.sqrt(3) * 0.5j
+            
+            # Returning One Real Root and two Complex Roots as numpy array.
+            return np.array([x1, x2, x3])
+                             
+#%% Power conversion methods (from DR utils_lib)
+                             
+class conv:
+    """Class containing functions that converts linear to dBm"""
+    
+    def dBmtoVpp(data):
+        "Function that changes from dBm to voltage peak to peak"
+        data = np.sqrt(np.power(10, data/10)/1000*50)*2*np.sqrt(2)
+        return data
+    
+    def dBmtoVrms(data):
+        "Function that changes from dBm to voltage rms"
+        data = np.sqrt(np.power(10, data/10)/1000*50)
+        return data
+    
+    def dBmtoP(data):
+        "Function that changes from dBm to power"
+        data = np.power(10, data/10)/1000
+        return data
+        
+    def VtodBm(data):
+        "Function that changes from voltage to dBm"
+        data = 10*np.log10(data**2/50*1000)
+        return data
+    
+    def VpptodBm(data):
+        "Function that changes from voltage to dBm"
+        data = 10*np.log10((data/2/np.sqrt(2))**2/50*1000)
+        return data
 
-            return np.array([x1, x2, x3])           # Returning One Real Root and two Complex Roots as numpy array.
+    def VpptoVrms(data):
+        "Function that changes from voltage to dBm"
+        data = data*2*np.sqrt(2)
+        return data    
+    
+    def VrmstoVpp(data):
+        "Function that changes from voltage to dBm"
+        data = data/np.sqrt(2)/2
+        return data    
+    
+    def VtodBV(data):
+        "Function that changes from V to dBV"
+        data = 10*np.log10(data**2)
+        return data
+    
+    def dBVtoV(data):
+        "Function that changes from dBV to V"
+        data = np.power(10, data/20)
+        return data
+    
+    def PSDtodBm(data):
+        "Function that changes from quatratic voltage to dBm"
+        data = 10*np.log10(data/50*1000)
+        return data
+
+    def PtodBm(data):
+        "Function that changes from power to dBm"
+        data = 10*np.log10(data*1000)
+        return data
+    
+    def Ptophotons(P, Q, w, Qc):
+        n = P*2*Q**2/(const.hbar*w**2*Qc)
+        return n
+
+#%% Physical constant class (from DR utils_lib)
+
+class const:
+    """Class containing constants"""
+    
+    muB = 9.2740100783e-24  # J/T Bohr magneton 
+    mu0 = 1.25663706212e-6 # N/A^2 vacuum magnetic permeability
+    eps0 = 8.8541878128e-12 # F/m vacuum electric permitivity
+    kb = 1.380649e-23 # J/K Boltzmann constant
+    hbar = 1.054571818e-34 # Js reduced Planck constant
+    h = 6.62607015e-34 # Js Planck constant
+    c = 299792458 # m/s speed of light
+    
+    # Electron properties
+    me = 9.1093837015e-31 # kg elefctron mass
+    qe =  1.602176634e-19 # C electron charge    
     
 #%% Internal functions
 
